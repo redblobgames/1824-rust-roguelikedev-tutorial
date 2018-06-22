@@ -1,0 +1,7 @@
+[package]
+name = "roguelike"
+version = "0.1.0"
+authors = ["Amit Patel <redblobgames@gmail.com>"]
+
+[dependencies]
+tcod = "0.12"

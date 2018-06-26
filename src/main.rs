@@ -69,25 +69,25 @@ impl Object {
 }
 
 
-fn render_all(root: &mut Root, con: &mut Offscreen, objects: &[Object], map: &Map) {
+fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map: &Map) {
     root.clear();
     
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
             let wall = map[x as usize][y as usize].block_sight;
             if wall {
-                con.set_char_background(x, y, COLOR_DARK_WALL, BackgroundFlag::Set);
+                console.set_char_background(x, y, COLOR_DARK_WALL, BackgroundFlag::Set);
             } else {
-                con.set_char_background(x, y, COLOR_DARK_GROUND, BackgroundFlag::Set);
+                console.set_char_background(x, y, COLOR_DARK_GROUND, BackgroundFlag::Set);
             }
         }
     }
     
     for object in objects {
-        object.draw(con);
+        object.draw(console);
     }
 
-    blit(&mut console, (0, 0), (SCREEN_WIDTH, SCREEN_HEIGHT), &mut root, (0, 0), 1.0, 1.0);
+    blit(console, (0, 0), (SCREEN_WIDTH, SCREEN_HEIGHT), root, (0, 0), 1.0, 1.0);
 }
 
 
@@ -123,16 +123,18 @@ fn main() {
 
     let player = Object::new(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, '@', colors::WHITE);
     let npc = Object::new(SCREEN_WIDTH / 2 - 5, SCREEN_HEIGHT / 2, '@', colors::YELLOW);
+    let mut map = make_map();
     let mut objects = [player, npc];
     
     while !root.window_closed() {
         console.clear();
-        
+        render_all(&mut root, &mut console, &objects, &map);
         root.flush();
         
         let key = root.wait_for_keypress(true);
         if handle_keys(&mut root, &mut objects[0], key) {
             break;
         }
+
     }
 }

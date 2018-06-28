@@ -38,15 +38,16 @@ const COLOR_LIGHT_GROUND: Color = Color { r: 200, g: 180, b: 50 };
 struct Tile {
     blocked: bool,
     block_sight: bool,
+    explored: bool,
 }
 
 impl Tile {
     pub fn empty() -> Self {
-        Tile { blocked: false, block_sight: false }
+        Tile { blocked: false, block_sight: false, explored: false, }
     }
 
     pub fn wall() -> Self {
-        Tile { blocked: true, block_sight: true }
+        Tile { blocked: true, block_sight: true, explored: false, }
     }
 }
 
@@ -134,20 +135,26 @@ fn create_v_tunnel(x: i32, y1: i32, y2: i32, map: &mut Map) {
 }
 
 
-fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map: &Map, fov_map: &mut FovMap) {
+fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map: &mut Map, fov_map: &FovMap) {
     root.clear();
     
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
             let visible = fov_map.is_in_fov(x, y);
             let wall = map[x as usize][y as usize].block_sight;
-            let color = match (visible, wall) {
-                (false, false) => COLOR_DARK_GROUND,
-                (false, true) => COLOR_DARK_WALL,
-                (true, false) => COLOR_LIGHT_GROUND,
-                (true, true) => COLOR_LIGHT_WALL,
-            };
-            console.set_char_background(x, y, color, BackgroundFlag::Set);
+            let explored = &mut map[x as usize][y as usize].explored;
+            if visible {
+                *explored = true;
+            }
+            if *explored {
+                let color = match (visible, wall) {
+                    (false, false) => COLOR_DARK_GROUND,
+                    (false, true) => COLOR_DARK_WALL,
+                    (true, false) => COLOR_LIGHT_GROUND,
+                    (true, true) => COLOR_LIGHT_WALL,
+                };
+                console.set_char_background(x, y, color, BackgroundFlag::Set);
+            }
         }
     }
     
@@ -164,6 +171,7 @@ fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map:
 fn handle_keys(root: &mut Root, player: &mut Object, key: Key) -> bool {
     use tcod::input::KeyCode::*;
     match key {
+        // TODO: don't allow move if it's into a wall
         Key { code: Up, .. } => player.move_by(0, -1),
         Key { code: Down, .. } => player.move_by(0, 1),
         Key { code: Left, .. } => player.move_by(-1, 0),
@@ -191,7 +199,7 @@ fn main() {
     
     tcod::system::set_fps(LIMIT_FPS);
 
-    let (map, player_position) = make_map();
+    let (mut map, player_position) = make_map();
     let mut previous_player_position = (-1, -1);
     let player = Object::new(player_position, '@', colors::WHITE);
     let npc = Object::new((54, 27), 'R', colors::YELLOW);
@@ -214,7 +222,7 @@ fn main() {
                                 TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
         }
 
-        render_all(&mut root, &mut console, &objects, &map, &mut fov_map);
+        render_all(&mut root, &mut console, &objects, &mut map, &fov_map);
         root.flush();
         
         let key = root.wait_for_keypress(true);

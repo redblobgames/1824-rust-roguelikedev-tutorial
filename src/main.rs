@@ -1,7 +1,13 @@
+#![allow(dead_code)]
+
 extern crate rand;
 extern crate tcod;
 
+mod entity;
+use entity::Object;
+
 use std::cmp;
+use tcod::map::{Map as FovMap, FovAlgorithm};
 use rand::Rng;
 use tcod::input::Key;
 use tcod::console::*;
@@ -14,12 +20,19 @@ const LIMIT_FPS: i32 = 20;
 
 const MAP_WIDTH: i32 = 80;
 const MAP_HEIGHT: i32 = 45;
-const COLOR_DARK_WALL: Color = Color { r: 0, g: 0, b: 100 };
-const COLOR_DARK_GROUND: Color = Color { r: 50, g: 50, b: 150 };
 
 const ROOM_MAX_SIZE: i32 = 10;
 const ROOM_MIN_SIZE: i32 = 6;
 const MAX_ROOMS: i32 = 30;
+
+const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic;
+const FOV_LIGHT_WALLS: bool = true;
+const TORCH_RADIUS: i32 = 10;
+
+const COLOR_DARK_WALL: Color = Color { r: 0, g: 0, b: 100 };
+const COLOR_LIGHT_WALL: Color = Color { r: 130, g: 110, b: 50 };
+const COLOR_DARK_GROUND: Color = Color { r: 50, g: 50, b: 150 };
+const COLOR_LIGHT_GROUND: Color = Color { r: 200, g: 180, b: 50 };
 
 #[derive(Clone, Copy, Debug)]
 struct Tile {
@@ -42,7 +55,7 @@ impl Tile {
 struct Rect {
     left: i32, right: i32, width: i32,
     top: i32, bottom: i32, height: i32,
-    
+    // TODO: how do I mark these as 'const'?
 }
 
 impl Rect {
@@ -121,47 +134,27 @@ fn create_v_tunnel(x: i32, y1: i32, y2: i32, map: &mut Map) {
 }
 
 
-struct Object {
-    x: i32,
-    y: i32,
-    char: char,
-    color: Color,
-}
-
-impl Object {
-    pub fn new(x: i32, y: i32, char: char, color: Color,) -> Self {
-        Object {
-            x: x,
-            y: y,
-            char: char,
-            color: color,
-        }
-    }
-
-    pub fn move_by(&mut self, dx: i32, dy: i32) {
-        self.x += dx;
-        self.y += dy;
-    }
-
-    pub fn draw(&self, con: &mut Console) {
-        con.set_default_foreground(self.color);
-        con.put_char(self.x, self.y, self.char, BackgroundFlag::None);
-    }
-}
-
-
-fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map: &Map) {
+fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map: &Map, fov_map: &mut FovMap) {
     root.clear();
     
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
+            let visible = fov_map.is_in_fov(x, y);
             let wall = map[x as usize][y as usize].block_sight;
-            console.set_char_background(x, y, if wall { COLOR_DARK_WALL } else { COLOR_DARK_GROUND }, BackgroundFlag::Set);
+            let color = match (visible, wall) {
+                (false, false) => COLOR_DARK_GROUND,
+                (false, true) => COLOR_DARK_WALL,
+                (true, false) => COLOR_LIGHT_GROUND,
+                (true, true) => COLOR_LIGHT_WALL,
+            };
+            console.set_char_background(x, y, color, BackgroundFlag::Set);
         }
     }
     
     for object in objects {
-        object.draw(console);
+        if fov_map.is_in_fov(object.position.0, object.position.1) {
+            object.draw(console);
+        }
     }
 
     blit(console, (0, 0), (SCREEN_WIDTH, SCREEN_HEIGHT), root, (0, 0), 1.0, 1.0);
@@ -198,17 +191,34 @@ fn main() {
     
     tcod::system::set_fps(LIMIT_FPS);
 
-    let (map, (player_x, player_y)) = make_map();
-    let player = Object::new(player_x, player_y, '@', colors::WHITE);
-    let npc = Object::new(54, 27, 'R', colors::YELLOW);
+    let (map, player_position) = make_map();
+    let mut previous_player_position = (-1, -1);
+    let player = Object::new(player_position, '@', colors::WHITE);
+    let npc = Object::new((54, 27), 'R', colors::YELLOW);
     let mut objects = [player, npc];
+
+    let mut fov_map = FovMap::new(MAP_WIDTH, MAP_HEIGHT);
+    for y in 0..MAP_HEIGHT {
+        for x in 0..MAP_WIDTH {
+            fov_map.set(x, y,
+                        !map[x as usize][y as usize].block_sight,
+                        !map[x as usize][y as usize].blocked);
+        }
+    }
     
     while !root.window_closed() {
         console.clear();
-        render_all(&mut root, &mut console, &objects, &map);
+        if previous_player_position != objects[0].position {
+            let player = &objects[0];
+            fov_map.compute_fov(player.position.0, player.position.1,
+                                TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
+        }
+
+        render_all(&mut root, &mut console, &objects, &map, &mut fov_map);
         root.flush();
         
         let key = root.wait_for_keypress(true);
+        previous_player_position = objects[0].position;
         if handle_keys(&mut root, &mut objects[0], key) {
             break;
         }

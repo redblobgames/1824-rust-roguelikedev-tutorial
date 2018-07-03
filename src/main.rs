@@ -36,6 +36,7 @@ const COLOR_LIGHT_WALL: Color = Color { r: 130, g: 110, b: 50 };
 const COLOR_DARK_GROUND: Color = Color { r: 50, g: 50, b: 150 };
 const COLOR_LIGHT_GROUND: Color = Color { r: 200, g: 180, b: 50 };
 
+const PLAYER: usize = 0;
 const MAX_ROOM_MONSTERS: i32 = 3;
 
 #[derive(Clone, Copy, Debug)]
@@ -120,7 +121,7 @@ impl Map {
 
 
 
-fn place_objects(room: Rect, objects: &mut Vec<Object>) {
+fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>) {
     let num_monsters = rand::thread_rng().gen_range(0, MAX_ROOM_MONSTERS + 1);
 
     for _ in 0..num_monsters {
@@ -128,15 +129,26 @@ fn place_objects(room: Rect, objects: &mut Vec<Object>) {
             rand::thread_rng().gen_range(room.left + 1, room.right),
             rand::thread_rng().gen_range(room.top + 1, room.bottom),
         );
-        let mut monster = if rand::random::<f32>() < 0.8 {
-            Object::new(pos, 'o', colors::DESATURATED_GREEN)
-        } else {
-            Object::new(pos, 'T', colors::DARKER_GREEN)
-        };
-        objects.push(monster);
+        if !is_blocked(pos, map, objects) {
+            let mut monster = if rand::random::<f32>() < 0.8 {
+                Object::new("Orc", 'o', colors::DESATURATED_GREEN, pos)
+            } else {
+                Object::new("Troll", 'T', colors::DARKER_GREEN, pos)
+            };
+            objects.push(monster);
+        }
     }
 }
 
+fn is_blocked(pos: (i32, i32), map: &Map, objects: &[Object]) -> bool {
+    if map.tiles[pos.0 as usize][pos.1 as usize].blocked {
+        return true;
+    }
+
+    return objects.iter().any(|object| {
+        object.blocks && object.position == pos
+    });
+}
 
 
 fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map: &mut Map, fov_map: &FovMap) {
@@ -172,14 +184,22 @@ fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map:
 }
 
 
-fn handle_keys(root: &mut Root, player: &mut Object, key: Key) -> bool {
+fn move_object(id: usize, delta: (i32, i32), map: &Map, objects: &mut[Object]) {
+    let new_pos = (objects[id].position.0 + delta.0,
+                   objects[id].position.1 + delta.1);
+    if !is_blocked(new_pos, map, objects) {
+        objects[id].move_to(new_pos);
+    }
+}
+
+
+fn handle_keys(root: &mut Root, map: &Map, objects: &mut[Object], key: Key) -> bool {
     use tcod::input::KeyCode::*;
     match key {
-        // TODO: don't allow move if it's into a wall
-        Key { code: Up, .. } => player.move_by(0, -1),
-        Key { code: Down, .. } => player.move_by(0, 1),
-        Key { code: Left, .. } => player.move_by(-1, 0),
-        Key { code: Right, .. } => player.move_by(1, 0),
+        Key { code: Up, .. } => move_object(PLAYER, (0, -1), map, objects),
+        Key { code: Down, .. } => move_object(PLAYER, (0, 1), map, objects),
+        Key { code: Left, .. } => move_object(PLAYER, (-1, 0), map, objects),
+        Key { code: Right, .. } => move_object(PLAYER, (1, 0), map, objects),
         Key { code: Char, printable: 'q', .. } => return true,
         Key { code: Escape, .. } => return true,
         Key { code: Enter, alt: true, .. } => {
@@ -204,10 +224,14 @@ fn main() {
     tcod::system::set_fps(LIMIT_FPS);
 
     let mut map = Map::new();
-    let player = Object::new(map.rooms[0].center(), '@', colors::WHITE);
+    let player = Object::new("Player", '@', colors::WHITE, map.rooms[0].center());
     let mut previous_player_position = (-1, -1);
-    let mut objects = [player];
+    let mut objects:Vec<Object> = vec![player];
 
+    for room in map.rooms.iter() {
+        place_objects(*room, &map, &mut objects);
+    }
+    
     let mut fov_map = FovMap::new(MAP_WIDTH, MAP_HEIGHT);
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
@@ -219,8 +243,8 @@ fn main() {
     
     while !root.window_closed() {
         console.clear();
-        if previous_player_position != objects[0].position {
-            let player = &objects[0];
+        if previous_player_position != objects[PLAYER].position {
+            let player = &objects[PLAYER];
             fov_map.compute_fov(player.position.0, player.position.1,
                                 TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
         }
@@ -229,8 +253,8 @@ fn main() {
         root.flush();
         
         let key = root.wait_for_keypress(true);
-        previous_player_position = objects[0].position;
-        if handle_keys(&mut root, &mut objects[0], key) {
+        previous_player_position = objects[PLAYER].position;
+        if handle_keys(&mut root, &map, &mut objects, key) {
             break;
         }
 

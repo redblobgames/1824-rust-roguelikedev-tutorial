@@ -2,23 +2,28 @@ use tcod::Color;
 use tcod::console::*;
 
 pub struct Object {
+    pub name: String,
+    pub glyph: char,
+    pub color: Color,
     pub position: (i32, i32),
-    glyph: char,
-    color: Color,
+    pub blocks: bool,
+    pub alive: bool,
 }
 
 impl Object {
-    pub fn new(position: (i32, i32), glyph: char, color: Color) -> Self {
+    pub fn new(name: &str, glyph: char, color: Color, position: (i32, i32)) -> Self {
         Object {
-            position: position,
+            name: name.into(),
             glyph: glyph,
             color: color,
+            position: position,
+            blocks: true,
+            alive: true,
         }
     }
 
-    pub fn move_by(&mut self, dx: i32, dy: i32) {
-        self.position.0 += dx;
-        self.position.1 += dy;
+    pub fn move_to(&mut self, pos: (i32, i32)) {
+        self.position = pos;
     }
 
     pub fn draw(&self, con: &mut Console) {
@@ -26,5 +31,3 @@ impl Object {
         con.put_char(self.position.0, self.position.1, self.glyph, BackgroundFlag::None);
     }
 }
-
-

@@ -5,6 +5,8 @@ extern crate tcod;
 
 mod entity;
 use entity::Object;
+mod rect;
+use rect::Rect;
 
 use std::cmp;
 use tcod::map::{Map as FovMap, FovAlgorithm};
@@ -34,6 +36,8 @@ const COLOR_LIGHT_WALL: Color = Color { r: 130, g: 110, b: 50 };
 const COLOR_DARK_GROUND: Color = Color { r: 50, g: 50, b: 150 };
 const COLOR_LIGHT_GROUND: Color = Color { r: 200, g: 180, b: 50 };
 
+const MAX_ROOM_MONSTERS: i32 = 3;
+
 #[derive(Clone, Copy, Debug)]
 struct Tile {
     blocked: bool,
@@ -52,87 +56,87 @@ impl Tile {
 }
 
 
-#[derive(Clone, Copy, Debug)]
-struct Rect {
-    left: i32, right: i32, width: i32,
-    top: i32, bottom: i32, height: i32,
-    // TODO: how do I mark these as 'const'?
+struct Map {
+    tiles: Vec<Vec<Tile>>,
+    rooms: Vec<Rect>,
 }
 
-impl Rect {
-    pub fn new(left: i32, top: i32, width: i32, height: i32) -> Self {
-        Rect {
-            left: left, right: left + width, width: width,
-            top: top, bottom: top + height, height: height,
-        }
-    }
+impl Map {
+    pub fn new() -> Self {
+        let mut map = Map {
+            tiles: vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize],
+            rooms: vec![],
+        };
+        for _ in 0..MAX_ROOMS {
+            let width = rand::thread_rng().gen_range(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1);
+            let height = rand::thread_rng().gen_range(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1);
+            let left = rand::thread_rng().gen_range(0, MAP_WIDTH - width);
+            let top = rand::thread_rng().gen_range(0, MAP_HEIGHT - height);
 
-    pub fn center(&self) -> (i32, i32) {
-        (self.left + self.width/2,
-         self.top + self.height/2)
-    }
-
-    pub fn intersects_with(&self, other: &Rect) -> bool {
-        (self.left <= other.right) && (other.left <= self.right)
-            && (self.top <= other.bottom) && (other.top <= self.bottom)
-    }
-}
-
-type Map = Vec<Vec<Tile>>;
-
-fn make_map() -> (Map, (i32, i32)) {
-    let mut map = vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
-    let mut rooms = vec![];
-
-    for _ in 0..MAX_ROOMS {
-        let width = rand::thread_rng().gen_range(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1);
-        let height = rand::thread_rng().gen_range(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1);
-        let left = rand::thread_rng().gen_range(0, MAP_WIDTH - width);
-        let top = rand::thread_rng().gen_range(0, MAP_HEIGHT - height);
-
-        let new_room = Rect::new(left, top, width, height);
-        let fits = rooms.iter().all(|other_room| !new_room.intersects_with(other_room));
-        if fits {
-            create_room(new_room, &mut map);
-            if !rooms.is_empty() {
-                let (new_x, new_y) = new_room.center();
-                let (prev_x, prev_y) = rooms[rooms.len() - 1].center();
-                if rand::random() {
-                    // first move horizontally, then vertically
-                    create_h_tunnel(prev_x, new_x, prev_y, &mut map);
-                    create_v_tunnel(new_x, prev_y, new_y, &mut map);
-                } else {
-                    // first move vertically, then horizontally
-                    create_v_tunnel(prev_x, prev_y, new_y, &mut map);
-                    create_h_tunnel(prev_x, new_x, new_y, &mut map);
+            let new_room = Rect::new(left, top, width, height);
+            let fits = map.rooms.iter().all(|other_room| !new_room.intersects_with(other_room));
+            if fits {
+                map.create_room(new_room);
+                if !map.rooms.is_empty() {
+                    let (new_x, new_y) = new_room.center();
+                    // TODO: try map.rooms.last().unwrap()
+                    let (prev_x, prev_y) = map.rooms[map.rooms.len() - 1].center();
+                    if rand::random() {
+                        // first move horizontally, then vertically
+                        map.create_h_tunnel(prev_x, new_x, prev_y);
+                        map.create_v_tunnel(new_x, prev_y, new_y);
+                    } else {
+                        // first move vertically, then horizontally
+                        map.create_v_tunnel(prev_x, prev_y, new_y);
+                        map.create_h_tunnel(prev_x, new_x, new_y);
+                    }
                 }
+                map.rooms.push(new_room);
             }
-            rooms.push(new_room);
+        }
+        map
+    }
+
+    fn create_room(&mut self, room: Rect) {
+        for j in 0 .. room.height {
+            for i in 0 .. room.width {
+                self.tiles[(room.left + i) as usize][(room.top + j) as usize] = Tile::empty();
+            }
         }
     }
-    
-    (map, rooms[0].center())
-}
 
-fn create_room(room: Rect, map: &mut Map) {
-    for j in 0 .. room.height {
-        for i in 0 .. room.width {
-            map[(room.left + i) as usize][(room.top + j) as usize] = Tile::empty();
-        }
+    fn create_h_tunnel(&mut self, x1: i32, x2: i32, y: i32) {
+        let left = cmp::min(x1, x2);
+        let width = 1 + (x1 - x2).abs();
+        self.create_room(Rect::new(left, y, width, 1));
+    }
+
+    fn create_v_tunnel(&mut self, x: i32, y1: i32, y2: i32) {
+        let top = cmp::min(y1, y2);
+        let height = 1 + (y1 - y2).abs();
+        self.create_room(Rect::new(x, top, 1, height));
     }
 }
 
-fn create_h_tunnel(x1: i32, x2: i32, y: i32, map: &mut Map) {
-    let left = cmp::min(x1, x2);
-    let width = 1 + (x1 - x2).abs();
-    create_room(Rect::new(left, y, width, 1), map);
+
+
+fn place_objects(room: Rect, objects: &mut Vec<Object>) {
+    let num_monsters = rand::thread_rng().gen_range(0, MAX_ROOM_MONSTERS + 1);
+
+    for _ in 0..num_monsters {
+        let pos = (
+            rand::thread_rng().gen_range(room.left + 1, room.right),
+            rand::thread_rng().gen_range(room.top + 1, room.bottom),
+        );
+        let mut monster = if rand::random::<f32>() < 0.8 {
+            Object::new(pos, 'o', colors::DESATURATED_GREEN)
+        } else {
+            Object::new(pos, 'T', colors::DARKER_GREEN)
+        };
+        objects.push(monster);
+    }
 }
 
-fn create_v_tunnel(x: i32, y1: i32, y2: i32, map: &mut Map) {
-    let top = cmp::min(y1, y2);
-    let height = 1 + (y1 - y2).abs();
-    create_room(Rect::new(x, top, 1, height), map);
-}
 
 
 fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map: &mut Map, fov_map: &FovMap) {
@@ -141,8 +145,8 @@ fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map:
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
             let visible = fov_map.is_in_fov(x, y);
-            let wall = map[x as usize][y as usize].block_sight;
-            let explored = &mut map[x as usize][y as usize].explored;
+            let wall = map.tiles[x as usize][y as usize].block_sight;
+            let explored = &mut map.tiles[x as usize][y as usize].explored;
             if visible {
                 *explored = true;
             }
@@ -199,18 +203,17 @@ fn main() {
     
     tcod::system::set_fps(LIMIT_FPS);
 
-    let (mut map, player_position) = make_map();
+    let mut map = Map::new();
+    let player = Object::new(map.rooms[0].center(), '@', colors::WHITE);
     let mut previous_player_position = (-1, -1);
-    let player = Object::new(player_position, '@', colors::WHITE);
-    let npc = Object::new((54, 27), 'R', colors::YELLOW);
-    let mut objects = [player, npc];
+    let mut objects = [player];
 
     let mut fov_map = FovMap::new(MAP_WIDTH, MAP_HEIGHT);
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
             fov_map.set(x, y,
-                        !map[x as usize][y as usize].block_sight,
-                        !map[x as usize][y as usize].blocked);
+                        !map.tiles[x as usize][y as usize].block_sight,
+                        !map.tiles[x as usize][y as usize].blocked);
         }
     }
     

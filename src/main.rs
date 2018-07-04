@@ -39,6 +39,13 @@ const COLOR_LIGHT_GROUND: Color = Color { r: 200, g: 180, b: 50 };
 const PLAYER: usize = 0;
 const MAX_ROOM_MONSTERS: i32 = 3;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PlayerAction {
+    TookTurn,
+    DidntTakeTurn,
+    Exit,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Tile {
     blocked: bool,
@@ -184,31 +191,48 @@ fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map:
 }
 
 
-fn move_object(id: usize, delta: (i32, i32), map: &Map, objects: &mut[Object]) {
+fn move_or_attack(id: usize, delta: (i32, i32), map: &Map, objects: &mut[Object]) -> PlayerAction {
     let new_pos = (objects[id].position.0 + delta.0,
                    objects[id].position.1 + delta.1);
-    if !is_blocked(new_pos, map, objects) {
-        objects[id].move_to(new_pos);
+    let target_id = objects.iter().position(|object| {
+        object.position == new_pos
+    });
+
+    match target_id {
+        Some(target_id) => {
+            println!("The {} laughs at your puny efforts to attack him!", objects[target_id].name);
+            PlayerAction::TookTurn
+        }
+        None => {
+            if !is_blocked(new_pos, map, objects) {
+                objects[id].move_to(new_pos);
+                PlayerAction::TookTurn
+            } else {
+                PlayerAction::DidntTakeTurn
+            }
+        }
     }
 }
 
 
-fn handle_keys(root: &mut Root, map: &Map, objects: &mut[Object], key: Key) -> bool {
+fn handle_keys(root: &mut Root, map: &Map, objects: &mut[Object], key: Key) -> PlayerAction {
+    use PlayerAction::*;
     use tcod::input::KeyCode::*;
-    match key {
-        Key { code: Up, .. } => move_object(PLAYER, (0, -1), map, objects),
-        Key { code: Down, .. } => move_object(PLAYER, (0, 1), map, objects),
-        Key { code: Left, .. } => move_object(PLAYER, (-1, 0), map, objects),
-        Key { code: Right, .. } => move_object(PLAYER, (1, 0), map, objects),
-        Key { code: Char, printable: 'q', .. } => return true,
-        Key { code: Escape, .. } => return true,
+    // TODO: handle player being dead
+    return match key {
+        Key { code: Up, .. } => move_or_attack(PLAYER, (0, -1), map, objects),
+        Key { code: Down, .. } => move_or_attack(PLAYER, (0, 1), map, objects),
+        Key { code: Left, .. } => move_or_attack(PLAYER, (-1, 0), map, objects),
+        Key { code: Right, .. } => move_or_attack(PLAYER, (1, 0), map, objects),
+        Key { code: Char, printable: 'q', .. } => Exit,
+        Key { code: Escape, .. } => Exit,
         Key { code: Enter, alt: true, .. } => {
             let fullscreen = root.is_fullscreen();
             root.set_fullscreen(!fullscreen);
+            DidntTakeTurn
         },
-        _ => {},
+        _ => DidntTakeTurn,
     }
-    false
 }
 
 fn main() {
@@ -254,9 +278,16 @@ fn main() {
         
         let key = root.wait_for_keypress(true);
         previous_player_position = objects[PLAYER].position;
-        if handle_keys(&mut root, &map, &mut objects, key) {
+        let player_action = handle_keys(&mut root, &map, &mut objects, key);
+        if player_action == PlayerAction::Exit {
             break;
         }
-
+        if objects[PLAYER].alive && player_action == PlayerAction::TookTurn {
+            for object_id in 0..objects.len() {
+                if object_id != PLAYER {
+                    // TODO: monster takes turn
+                }
+            }
+        }
     }
 }

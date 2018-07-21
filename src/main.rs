@@ -4,7 +4,7 @@ extern crate rand;
 extern crate tcod;
 
 mod entity;
-use entity::Object;
+use entity::*;
 mod rect;
 use rect::Rect;
 
@@ -127,6 +127,12 @@ impl Map {
 }
 
 
+fn distance(here: (i32, i32), there: (i32, i32)) -> f32 {
+    let dx = here.0 - there.0;
+    let dy = here.1 - there.1;
+    ((dx.pow(2) + dy.pow(2)) as f32).sqrt()
+}
+
 
 fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>) {
     let num_monsters = rand::thread_rng().gen_range(0, MAX_ROOM_MONSTERS + 1);
@@ -138,14 +144,21 @@ fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>) {
         );
         if !is_blocked(pos, map, objects) {
             let mut monster = if rand::random::<f32>() < 0.8 {
-                Object::new("Orc", 'o', colors::DESATURATED_GREEN, pos)
+                let mut orc = Object::new("Orc", 'o', colors::DESATURATED_GREEN, pos);
+                orc.fighter = Some(Fighter{max_hp: 10, hp: 10, defense: 0, power: 3});
+                orc.ai = Some(Ai);
+                orc
             } else {
-                Object::new("Troll", 'T', colors::DARKER_GREEN, pos)
+                let mut troll = Object::new("Troll", 'T', colors::DARKER_GREEN, pos);
+                troll.fighter = Some(Fighter{max_hp: 16, hp: 16, defense: 1, power: 4});
+                troll.ai = Some(Ai);
+                troll
             };
             objects.push(monster);
         }
     }
 }
+
 
 fn is_blocked(pos: (i32, i32), map: &Map, objects: &[Object]) -> bool {
     if map.tiles[pos.0 as usize][pos.1 as usize].blocked {
@@ -191,6 +204,19 @@ fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map:
 }
 
 
+fn move_towards(id: usize, target: (i32, i32), map: &Map, objects: &mut [Object]) {
+    let d = distance(target, objects[id].position);
+    let dx = ((target.0 - objects[id].position.0) as f32 / d).round() as i32;
+    let dy = ((target.1 - objects[id].position.1) as f32 / d).round() as i32;
+    let new_pos = (objects[id].position.0 + dx,
+                   objects[id].position.1 + dy);
+    
+    if !is_blocked(new_pos, map, objects) {
+        objects[id].move_to(new_pos);
+    }
+}
+
+
 fn move_or_attack(id: usize, delta: (i32, i32), map: &Map, objects: &mut[Object]) -> PlayerAction {
     let new_pos = (objects[id].position.0 + delta.0,
                    objects[id].position.1 + delta.1);
@@ -210,6 +236,19 @@ fn move_or_attack(id: usize, delta: (i32, i32), map: &Map, objects: &mut[Object]
             } else {
                 PlayerAction::DidntTakeTurn
             }
+        }
+    }
+}
+
+
+fn ai_take_turn(monster_id: usize, map: &Map, objects: &mut [Object], fov_map: &FovMap) {
+    let pos = objects[monster_id].position;
+    if fov_map.is_in_fov(pos.0, pos.1) {
+        if distance(objects[monster_id].position, objects[PLAYER].position) >= 2.0 {
+            move_towards(monster_id, objects[PLAYER].position, map, objects);
+        } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
+            let monster = &objects[monster_id];
+            println!("The attack of the {} bounces off your shiny metal armor!", monster.name);
         }
     }
 }
@@ -248,7 +287,8 @@ fn main() {
     tcod::system::set_fps(LIMIT_FPS);
 
     let mut map = Map::new();
-    let player = Object::new("Player", '@', colors::WHITE, map.rooms[0].center());
+    let mut player = Object::new("Player", '@', colors::WHITE, map.rooms[0].center());
+    player.fighter = Some(Fighter{max_hp: 30, hp: 30, defense: 2, power: 5});
     let mut previous_player_position = (-1, -1);
     let mut objects:Vec<Object> = vec![player];
 
@@ -282,10 +322,10 @@ fn main() {
         if player_action == PlayerAction::Exit {
             break;
         }
-        if objects[PLAYER].alive && player_action == PlayerAction::TookTurn {
-            for object_id in 0..objects.len() {
-                if object_id != PLAYER {
-                    // TODO: monster takes turn
+        if objects[PLAYER].alive && player_action != PlayerAction::DidntTakeTurn {
+            for id in 0..objects.len() {
+                if objects[id].ai.is_some() {
+                    ai_take_turn(id, &map, &mut objects, &fov_map);
                 }
             }
         }

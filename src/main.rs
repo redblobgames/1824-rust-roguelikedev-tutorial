@@ -18,10 +18,16 @@ use tcod::colors;
 
 const SCREEN_WIDTH: i32 = 80;
 const SCREEN_HEIGHT: i32 = 50;
+const BAR_WIDTH: i32 = 20;
+const PANEL_HEIGHT: i32 = 7;
+const PANEL_Y: i32 = SCREEN_HEIGHT - PANEL_HEIGHT;
+const MSG_X: i32 = BAR_WIDTH + 2;
+const MSG_WIDTH: i32 = SCREEN_WIDTH - BAR_WIDTH - 2;
+const MSG_HEIGHT: usize = PANEL_HEIGHT as usize - 1;
 const LIMIT_FPS: i32 = 20;
 
 const MAP_WIDTH: i32 = 80;
-const MAP_HEIGHT: i32 = 45;
+const MAP_HEIGHT: i32 = 43;
 
 const ROOM_MAX_SIZE: i32 = 10;
 const ROOM_MIN_SIZE: i32 = 6;
@@ -38,6 +44,8 @@ const COLOR_LIGHT_GROUND: Color = Color { r: 200, g: 180, b: 50 };
 
 const PLAYER: usize = 0;
 const MAX_ROOM_MONSTERS: i32 = 3;
+
+type Messages = Vec<(String, Color)>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PlayerAction {
@@ -171,7 +179,17 @@ fn is_blocked(pos: (i32, i32), map: &Map, objects: &[Object]) -> bool {
 }
 
 
-fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map: &mut Map, fov_map: &FovMap) {
+fn message<T: Into<String>>(messages: &mut Messages, message: T, color: Color) {
+    if messages.len() == MSG_HEIGHT {
+        messages.remove(0);
+    }
+    messages.push((message.into(), color));
+}
+
+
+fn render_all(root: &mut Root, console: &mut Offscreen, panel: &mut Offscreen,
+              objects: &[Object], map: &mut Map, messages: &Messages,
+              fov_map: &FovMap) {
     root.clear();
     
     for y in 0..MAP_HEIGHT {
@@ -205,6 +223,40 @@ fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map:
     }
 
     blit(console, (0, 0), (SCREEN_WIDTH, SCREEN_HEIGHT), root, (0, 0), 1.0, 1.0);
+
+    panel.set_default_background(colors::BLACK);
+    panel.clear();
+    
+    let hp = objects[PLAYER].fighter.map_or(0, |f| f.hp);
+    let max_hp = objects[PLAYER].fighter.map_or(0, |f| f.max_hp);
+    render_bar(panel, 1, 1, BAR_WIDTH, "HP", hp, max_hp, colors::LIGHT_RED, colors::DARKER_RED);
+
+    let mut y = MSG_HEIGHT as i32;
+    for &(ref msg, color) in messages.iter().rev() {
+        let msg_height = panel.get_height_rect(MSG_X, y, MSG_WIDTH, 0, msg);
+        y -= msg_height;
+        if y < 0 {
+            break;
+        }
+        panel.set_default_foreground(color);
+        panel.print_rect(MSG_X, y, MSG_WIDTH, 0, msg);
+    }
+    
+    blit(panel, (0, 0), (SCREEN_WIDTH, PANEL_HEIGHT), root, (0, PANEL_Y), 1.0, 1.0);
+}
+
+
+fn render_bar(panel: &mut Offscreen, x: i32, y: i32, total_width: i32, name: &str, value: i32, maximum: i32, bar_bg: Color, panel_bg: Color) {
+    let bar_width = (value as f32 / maximum as f32 * total_width as f32).ceil() as i32;
+
+    panel.set_default_background(panel_bg);
+    panel.rect(x, y, total_width, 1, false, BackgroundFlag::Screen);
+    panel.set_default_background(bar_bg);
+    panel.rect(x, y, bar_width, 1, false, BackgroundFlag::Screen);
+    panel.set_default_foreground(colors::WHITE);
+    panel.print_ex(x + total_width / 2, y, BackgroundFlag::None, TextAlignment::Center,
+                   &format!("{}: {}/{}", name, value, maximum));
+}
 
 /// (copied from roguelike tutorial without trying to understand it --amitp)
 /// Mutably borrow two *separate* elements from the given slice.
@@ -294,13 +346,15 @@ fn handle_keys(root: &mut Root, map: &Map, objects: &mut[Object], key: Key) -> P
 
 fn main() {
     let mut root = Root::initializer()
-        .font("../arial10x10.png", FontLayout::Tcod)
+        .font("fonts/dejavu_wide16x16_gs_tc.png", FontLayout::Tcod)
         .font_type(FontType::Greyscale)
         .renderer(Renderer::GLSL)
         .size(SCREEN_WIDTH, SCREEN_HEIGHT)
         .title("Rust/libtcod tutorial")
         .init();
     let mut console = Offscreen::new(SCREEN_WIDTH, SCREEN_HEIGHT);
+    let mut panel = Offscreen::new(SCREEN_WIDTH, PANEL_HEIGHT);
+    let mut messages: Messages = vec![];
     
     tcod::system::set_fps(LIMIT_FPS);
 
@@ -331,7 +385,7 @@ fn main() {
                                 TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
         }
 
-        render_all(&mut root, &mut console, &objects, &mut map, &fov_map);
+        render_all(&mut root, &mut console, &mut panel, &objects, &mut map, &messages, &fov_map);
         root.flush();
         
         let key = root.wait_for_keypress(true);

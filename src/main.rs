@@ -145,12 +145,12 @@ fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>) {
         if !is_blocked(pos, map, objects) {
             let mut monster = if rand::random::<f32>() < 0.8 {
                 let mut orc = Object::new("Orc", 'o', colors::DESATURATED_GREEN, pos);
-                orc.fighter = Some(Fighter{max_hp: 10, hp: 10, defense: 0, power: 3});
+                orc.fighter = Some(Fighter{max_hp: 10, hp: 10, defense: 0, power: 3, on_death: DeathCallback::Monster});
                 orc.ai = Some(Ai);
                 orc
             } else {
                 let mut troll = Object::new("Troll", 'T', colors::DARKER_GREEN, pos);
-                troll.fighter = Some(Fighter{max_hp: 16, hp: 16, defense: 1, power: 4});
+                troll.fighter = Some(Fighter{max_hp: 16, hp: 16, defense: 1, power: 4, on_death: DeathCallback::Monster});
                 troll.ai = Some(Ai);
                 troll
             };
@@ -193,14 +193,31 @@ fn render_all(root: &mut Root, console: &mut Offscreen, objects: &[Object], map:
             }
         }
     }
-    
-    for object in objects {
-        if fov_map.is_in_fov(object.position.0, object.position.1) {
-            object.draw(console);
-        }
+
+    let to_draw: Vec<_> = objects.iter().filter(|o| fov_map.is_in_fov(o.position.0, o.position.1)).collect();
+    let layer_under: Vec<_> = to_draw.iter().filter(|o| !o.blocks).collect();
+    let layer_over: Vec<_> = to_draw.iter().filter(|o| o.blocks).collect();
+    for object in &layer_under {
+        object.draw(console);
+    }
+    for object in &layer_over {
+        object.draw(console);
     }
 
     blit(console, (0, 0), (SCREEN_WIDTH, SCREEN_HEIGHT), root, (0, 0), 1.0, 1.0);
+
+/// (copied from roguelike tutorial without trying to understand it --amitp)
+/// Mutably borrow two *separate* elements from the given slice.
+/// Panics when the indexes are equal or out of bounds.
+fn mut_two<T>(first_index: usize, second_index: usize, items: &mut [T]) -> (&mut T, &mut T) {
+    assert!(first_index != second_index);
+    let split_at_index = cmp::max(first_index, second_index);
+    let (first_slice, second_slice) = items.split_at_mut(split_at_index);
+    if first_index < second_index {
+        (&mut first_slice[first_index], &mut second_slice[0])
+    } else {
+        (&mut second_slice[0], &mut first_slice[second_index])
+    }
 }
 
 
@@ -221,12 +238,13 @@ fn move_or_attack(id: usize, delta: (i32, i32), map: &Map, objects: &mut[Object]
     let new_pos = (objects[id].position.0 + delta.0,
                    objects[id].position.1 + delta.1);
     let target_id = objects.iter().position(|object| {
-        object.position == new_pos
+        object.fighter.is_some() && object.position == new_pos
     });
 
     match target_id {
         Some(target_id) => {
-            println!("The {} laughs at your puny efforts to attack him!", objects[target_id].name);
+            let (player, target) = mut_two(PLAYER, target_id, objects);
+            player.attack(target);
             PlayerAction::TookTurn
         }
         None => {
@@ -247,8 +265,8 @@ fn ai_take_turn(monster_id: usize, map: &Map, objects: &mut [Object], fov_map: &
         if distance(objects[monster_id].position, objects[PLAYER].position) >= 2.0 {
             move_towards(monster_id, objects[PLAYER].position, map, objects);
         } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
-            let monster = &objects[monster_id];
-            println!("The attack of the {} bounces off your shiny metal armor!", monster.name);
+            let (monster, player) = mut_two(monster_id, PLAYER, objects);
+            monster.attack(player);
         }
     }
 }
@@ -288,7 +306,7 @@ fn main() {
 
     let mut map = Map::new();
     let mut player = Object::new("Player", '@', colors::WHITE, map.rooms[0].center());
-    player.fighter = Some(Fighter{max_hp: 30, hp: 30, defense: 2, power: 5});
+    player.fighter = Some(Fighter{max_hp: 30, hp: 30, defense: 2, power: 5, on_death: DeathCallback::Player});
     let mut previous_player_position = (-1, -1);
     let mut objects:Vec<Object> = vec![player];
 
